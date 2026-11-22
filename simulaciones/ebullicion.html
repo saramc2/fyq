@@ -1,0 +1,543 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Simulación: Curvas de Calentamiento y Ebullición</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;600;700&display=swap" rel="stylesheet">
+    <style>
+        body { font-family: 'Inter', sans-serif; }
+        .no-select { user-select: none; -webkit-user-select: none; }
+    </style>
+</head>
+<body class="bg-slate-900 text-slate-100 min-h-screen flex flex-col items-center justify-center p-4">
+
+    <!-- Contenedor Principal -->
+    <div class="max-w-6xl w-full bg-slate-800 rounded-2xl shadow-2xl border border-slate-700 overflow-hidden">
+        
+        <!-- Cabecera -->
+        <div class="p-5 sm:p-6 border-b border-slate-700 flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4">
+            <div>
+                <h1 class="text-xl sm:text-2xl font-bold text-sky-400">Simulación: Ebullición y Curva de Calentamiento</h1>
+                <p class="text-xs sm:text-sm text-slate-400 mt-1">Compara simultáneamente el Éter, el Alcohol y el Agua bajo el mismo suministro de calor.</p>
+            </div>
+            <div class="flex items-center gap-3">
+                <button id="playPauseBtn" class="px-4 py-2 rounded-xl text-sm font-semibold bg-emerald-600 hover:bg-emerald-500 text-white transition shadow">
+                    ⏸ Pausar
+                </button>
+                <button id="resetBtn" class="px-4 py-2 rounded-xl text-sm font-semibold bg-slate-700 hover:bg-slate-600 text-white transition">
+                    ↺ Reiniciar
+                </button>
+            </div>
+        </div>
+
+        <!-- Área de Simulación (3 Vasos a la izquierda + Gráfica de Calentamiento estirada a la derecha) -->
+        <div class="relative w-full h-[470px] sm:h-[450px] bg-slate-950">
+            <canvas id="simCanvas" class="w-full h-full block"></canvas>
+        </div>
+
+        <!-- Panel de Controles -->
+        <div class="p-5 sm:p-6 bg-slate-800/80 grid grid-cols-1 md:grid-cols-2 gap-6 border-t border-slate-700">
+            
+            <!-- Control de Potencia del Mechero (Calor suministrado) -->
+            <div class="bg-slate-900/60 p-4 rounded-xl border border-slate-700/50">
+                <div class="flex justify-between items-center mb-2">
+                    <label for="heatSlider" class="font-semibold text-orange-400 flex items-center gap-2">
+                        🔥 Potencia de Calentamiento
+                    </label>
+                    <span id="heatValue" class="font-mono font-bold text-base bg-slate-800 px-2.5 py-0.5 rounded-lg text-orange-300">Media (1.0x)</span>
+                </div>
+                <input type="range" id="heatSlider" min="0" max="2.5" value="1.0" step="0.1" 
+                       class="w-full h-2 bg-slate-700 rounded-lg appearance-none cursor-pointer accent-orange-500">
+                <div class="flex justify-between text-xs text-slate-500 mt-2">
+                    <span>0x (Apagado)</span>
+                    <span>1.0x (Normal)</span>
+                    <span>2.5x (Fuego alto)</span>
+                </div>
+            </div>
+
+            <!-- Control de Presión Externa -->
+            <div class="bg-slate-900/60 p-4 rounded-xl border border-slate-700/50">
+                <div class="flex justify-between items-center mb-2">
+                    <label for="pressSlider" class="font-semibold text-sky-400 flex items-center gap-2">
+                        ⬇️ Presión Atmosférica
+                    </label>
+                    <span id="pressValue" class="font-mono font-bold text-base bg-slate-800 px-2.5 py-0.5 rounded-lg text-sky-300">1.00 atm</span>
+                </div>
+                <input type="range" id="pressSlider" min="0.3" max="1.5" value="1.0" step="0.05" 
+                       class="w-full h-2 bg-slate-700 rounded-lg appearance-none cursor-pointer accent-sky-500">
+                <div class="flex justify-between text-xs text-slate-500 mt-2">
+                    <span>0.3 atm (Montaña)</span>
+                    <span>1.0 atm (Nivel del mar)</span>
+                    <span>1.5 atm (Olla a presión)</span>
+                </div>
+            </div>
+
+        </div>
+
+        <!-- Explicación Didáctica -->
+        <div class="px-6 py-3.5 bg-slate-900/50 border-t border-slate-700/50 text-xs sm:text-sm text-slate-400">
+            💡 <strong>Fíjate en la curva de calentamiento:</strong> Mientras un líquido hierve, toda la energía se usa para romper fuerzas intermoleculares (cambio de estado) y <strong>su temperatura permanece constante (meseta)</strong> hasta que se agota el líquido por completo.
+        </div>
+    </div>
+
+    <script>
+        const canvas = document.getElementById('simCanvas');
+        const ctx = canvas.getContext('2d');
+
+        const heatSlider = document.getElementById('heatSlider');
+        const pressSlider = document.getElementById('pressSlider');
+        const heatValue = document.getElementById('heatValue');
+        const pressValue = document.getElementById('pressValue');
+        const playPauseBtn = document.getElementById('playPauseBtn');
+        const resetBtn = document.getElementById('resetBtn');
+
+        const SUBSTANCES_CONFIG = [
+            {
+                key: 'ether',
+                name: 'Éter',
+                normalBP: 34.6,
+                slope: 24.0,
+                heatRate: 1.45,
+                evapRate: 0.24,
+                color: '#c084fc',
+                liquidBg: 'rgba(192, 132, 252, 0.28)'
+            },
+            {
+                key: 'ethanol',
+                name: 'Alcohol',
+                normalBP: 78.4,
+                slope: 25.5,
+                heatRate: 1.15,
+                evapRate: 0.17,
+                color: '#34d399',
+                liquidBg: 'rgba(52, 211, 153, 0.28)'
+            },
+            {
+                key: 'water',
+                name: 'Agua',
+                normalBP: 100.0,
+                slope: 28.5,
+                heatRate: 0.85,
+                evapRate: 0.11,
+                color: '#38bdf8',
+                liquidBg: 'rgba(56, 189, 248, 0.28)'
+            }
+        ];
+
+        let isPaused = false;
+        let simTime = 0;
+        let substances = [];
+        const MAX_GRAPH_TIME = 22;
+
+        function resizeCanvas() {
+            const rect = canvas.parentElement.getBoundingClientRect();
+            canvas.width = rect.width;
+            canvas.height = rect.height;
+        }
+        window.addEventListener('resize', resizeCanvas);
+        resizeCanvas();
+
+        function getBoilingPoint(sub, atm) {
+            return sub.normalBP + sub.slope * Math.log(atm);
+        }
+
+        function initSimulation() {
+            simTime = 0;
+            substances = SUBSTANCES_CONFIG.map(cfg => {
+                const particles = [];
+                for (let i = 0; i < 32; i++) {
+                    particles.push({
+                        nx: 0.12 + Math.random() * 0.76,
+                        ny: 0.1 + Math.random() * 0.85,
+                        vx: (Math.random() - 0.5) * 0.025,
+                        vy: (Math.random() - 0.5) * 0.025
+                    });
+                }
+                return {
+                    ...cfg,
+                    temp: 20.0,
+                    liquidLevel: 1.0,
+                    isBoiling: false,
+                    evaporatedDone: false,
+                    history: [{ t: 0, temp: 20.0 }],
+                    particles,
+                    bubbles: [],
+                    steam: []
+                };
+            });
+        }
+
+        function getLayout() {
+            const isMobile = canvas.width < 700;
+            if (isMobile) {
+                const beakersArea = { x: 14, y: 34, w: canvas.width - 28, h: canvas.height * 0.42 };
+                const graphArea = { x: 44, y: canvas.height * 0.52, w: canvas.width - 58, h: canvas.height * 0.41 };
+                return { beakersArea, graphArea };
+            } else {
+                const beakersArea = { x: 18, y: 45, w: canvas.width * 0.37, h: canvas.height - 92 };
+                const graphArea = { x: canvas.width * 0.44, y: 48, w: canvas.width * 0.54, h: canvas.height - 94 };
+                return { beakersArea, graphArea };
+            }
+        }
+
+        function updatePhysics(dt) {
+            const heatPower = parseFloat(heatSlider.value);
+            const pressure = parseFloat(pressSlider.value);
+
+            pressValue.textContent = `${pressure.toFixed(2)} atm`;
+            if (heatPower === 0) heatValue.textContent = "Apagado (0.0x)";
+            else if (heatPower < 0.8) heatValue.textContent = `Baja (${heatPower.toFixed(1)}x)`;
+            else if (heatPower <= 1.3) heatValue.textContent = `Media (${heatPower.toFixed(1)}x)`;
+            else heatValue.textContent = `Alta (${heatPower.toFixed(1)}x)`;
+
+            if (isPaused) return;
+
+            const anyLiquidLeft = substances.some(s => s.liquidLevel > 0);
+            if (heatPower > 0 && anyLiquidLeft) {
+                simTime += dt;
+            }
+
+            substances.forEach(sub => {
+                const bp = getBoilingPoint(sub, pressure);
+
+                if (heatPower > 0) {
+                    if (sub.liquidLevel > 0) {
+                        if (sub.temp < bp) {
+                            sub.isBoiling = false;
+                            sub.temp += sub.heatRate * heatPower * 16 * dt;
+                            if (sub.temp >= bp) {
+                                sub.temp = bp;
+                                sub.isBoiling = true;
+                            }
+                        } else {
+                            sub.temp = bp;
+                            sub.isBoiling = true;
+                            sub.liquidLevel -= sub.evapRate * heatPower * dt;
+                            if (sub.liquidLevel <= 0) {
+                                sub.liquidLevel = 0;
+                                sub.isBoiling = false;
+                                sub.evaporatedDone = true;
+                                sub.history.push({ t: simTime, temp: bp });
+                            }
+                        }
+
+                        if (!sub.evaporatedDone) {
+                            const lastPt = sub.history[sub.history.length - 1];
+                            if (!lastPt || simTime - lastPt.t >= 0.08) {
+                                sub.history.push({ t: simTime, temp: sub.temp });
+                            }
+                        }
+                    } else {
+                        sub.isBoiling = false;
+                    }
+                } else {
+                    sub.isBoiling = false;
+                    if (sub.liquidLevel > 0 && sub.temp > 20) {
+                        sub.temp = Math.max(20, sub.temp - 4 * dt);
+                    }
+                }
+
+                if (sub.liquidLevel > 0) {
+                    const speed = 0.4 + (sub.temp / 45);
+                    sub.particles.forEach(p => {
+                        p.nx += p.vx * speed;
+                        p.ny += p.vy * speed;
+                        if (p.nx < 0.08) { p.nx = 0.08; p.vx *= -1; }
+                        if (p.nx > 0.92) { p.nx = 0.92; p.vx *= -1; }
+                        if (p.ny < 0.08) { p.ny = 0.08; p.vy *= -1; }
+                        if (p.ny > 0.92) { p.ny = 0.92; p.vy *= -1; }
+                    });
+
+                    if (sub.isBoiling && Math.random() < 0.35 * heatPower) {
+                        sub.bubbles.push({
+                            nx: 0.15 + Math.random() * 0.7,
+                            ny: 0.95,
+                            r: 2.5 + Math.random() * 3
+                        });
+                    }
+                } else {
+                    sub.bubbles = [];
+                }
+
+                for (let i = sub.bubbles.length - 1; i >= 0; i--) {
+                    let b = sub.bubbles[i];
+                    b.ny -= 0.035;
+                    if (b.ny <= 0) {
+                        sub.steam.push({
+                            nx: b.nx,
+                            offsetY: 0,
+                            vx: (Math.random() - 0.5) * 0.8,
+                            vy: -1.5 - Math.random() * 1.5,
+                            alpha: 1
+                        });
+                        sub.bubbles.splice(i, 1);
+                    }
+                }
+
+                if (sub.liquidLevel > 0 && heatPower > 0 && !sub.isBoiling && Math.random() < (sub.temp / bp) * 0.15) {
+                    sub.steam.push({
+                        nx: 0.15 + Math.random() * 0.7,
+                        offsetY: 0,
+                        vx: (Math.random() - 0.5) * 0.6,
+                        vy: -1.0 - Math.random(),
+                        alpha: 0.8
+                    });
+                }
+
+                for (let i = sub.steam.length - 1; i >= 0; i--) {
+                    let s = sub.steam[i];
+                    s.nx += s.vx * 0.01;
+                    s.offsetY += s.vy;
+                    s.alpha -= 0.02;
+                    if (s.alpha <= 0) sub.steam.splice(i, 1);
+                }
+            });
+        }
+
+        function drawScene() {
+            ctx.clearRect(0, 0, canvas.width, canvas.height);
+            const { beakersArea, graphArea } = getLayout();
+            const heatPower = parseFloat(heatSlider.value);
+            const pressure = parseFloat(pressSlider.value);
+
+            const gap = 12;
+            const beakerW = (beakersArea.w - gap * 2) / 3;
+            const beakerH = beakersArea.h - 35;
+            const beakerTop = beakersArea.y + 10;
+            const beakerBottom = beakerTop + beakerH;
+
+            substances.forEach((sub, idx) => {
+                const bx = beakersArea.x + idx * (beakerW + gap);
+
+                if (heatPower > 0.05) {
+                    const flameCount = 4;
+                    const spacing = (beakerW - 14) / (flameCount - 1);
+                    for (let i = 0; i < flameCount; i++) {
+                        const fx = bx + 7 + i * spacing;
+                        const fy = beakerBottom + 22;
+                        const fh = 6 + heatPower * 9 + Math.sin(Date.now() * 0.02 + i + idx) * 2;
+
+                        ctx.beginPath();
+                        ctx.moveTo(fx - 4.5, fy);
+                        ctx.quadraticCurveTo(fx, fy - fh * 1.6, fx + 4.5, fy);
+                        ctx.fillStyle = `rgba(249, 115, 22, ${0.4 + Math.min(0.6, heatPower * 0.3)})`;
+                        ctx.fill();
+                    }
+                }
+
+                const maxLiquidH = beakerH * 0.72;
+                const currentLiquidH = maxLiquidH * sub.liquidLevel;
+                const liquidTop = beakerBottom - currentLiquidH;
+
+                if (sub.liquidLevel > 0.005) {
+                    ctx.fillStyle = sub.liquidBg;
+                    ctx.fillRect(bx, liquidTop, beakerW, currentLiquidH);
+
+                    ctx.beginPath();
+                    ctx.moveTo(bx, liquidTop);
+                    for (let x = 0; x <= beakerW; x += 6) {
+                        const wave = sub.isBoiling ? Math.sin(x * 0.18 + Date.now() * 0.025) * 2.5 : 0;
+                        ctx.lineTo(bx + x, liquidTop + wave);
+                    }
+                    ctx.strokeStyle = sub.color;
+                    ctx.lineWidth = 2;
+                    ctx.stroke();
+
+                    const visibleCount = Math.ceil(sub.particles.length * sub.liquidLevel);
+                    ctx.fillStyle = sub.color;
+                    for (let i = 0; i < visibleCount; i++) {
+                        const p = sub.particles[i];
+                        const px = bx + p.nx * beakerW;
+                        const py = liquidTop + p.ny * currentLiquidH;
+                        ctx.beginPath();
+                        ctx.arc(px, py, 2.8, 0, Math.PI * 2);
+                        ctx.fill();
+                    }
+
+                    ctx.strokeStyle = '#ffffff';
+                    ctx.lineWidth = 1.2;
+                    sub.bubbles.forEach(b => {
+                        const bpx = bx + b.nx * beakerW;
+                        const bpy = liquidTop + b.ny * currentLiquidH;
+                        ctx.beginPath();
+                        ctx.arc(bpx, bpy, b.r, 0, Math.PI * 2);
+                        ctx.stroke();
+                    });
+                } else {
+                    ctx.fillStyle = '#64748b';
+                    ctx.font = 'bold 10px Inter, sans-serif';
+                    ctx.textAlign = 'center';
+                    ctx.fillText('¡Evaporado!', bx + beakerW / 2, beakerBottom - beakerH * 0.35);
+                }
+
+                sub.steam.forEach(s => {
+                    const spx = bx + s.nx * beakerW;
+                    const spy = liquidTop + s.offsetY;
+                    ctx.beginPath();
+                    ctx.arc(spx, spy, 2.6, 0, Math.PI * 2);
+                    ctx.fillStyle = sub.color;
+                    ctx.globalAlpha = Math.max(0, s.alpha);
+                    ctx.fill();
+                    ctx.globalAlpha = 1;
+                });
+
+                ctx.beginPath();
+                ctx.moveTo(bx, beakerTop);
+                ctx.lineTo(bx, beakerBottom);
+                ctx.lineTo(bx + beakerW, beakerBottom);
+                ctx.lineTo(bx + beakerW, beakerTop);
+                ctx.strokeStyle = '#94a3b8';
+                ctx.lineWidth = 2.5;
+                ctx.stroke();
+
+                ctx.textAlign = 'center';
+                ctx.fillStyle = sub.color;
+                ctx.font = 'bold 13px Inter, sans-serif';
+                ctx.fillText(sub.name, bx + beakerW / 2, beakerTop - 22);
+
+                if (sub.liquidLevel > 0) {
+                    ctx.fillStyle = sub.isBoiling ? '#fbbf24' : '#f8fafc';
+                    ctx.font = 'bold 12px monospace';
+                    ctx.fillText(`${sub.temp.toFixed(1)} °C`, bx + beakerW / 2, beakerTop - 7);
+                } else {
+                    ctx.fillStyle = '#64748b';
+                    ctx.font = 'bold 11px monospace';
+                    ctx.fillText('Sin líquido', bx + beakerW / 2, beakerTop - 7);
+                }
+
+                ctx.fillStyle = 'rgba(248, 250, 252, 0.75)';
+                ctx.font = '10px Inter, sans-serif';
+                ctx.fillText(`Líq: ${Math.round(sub.liquidLevel * 100)}%`, bx + beakerW / 2, beakerBottom - 6);
+            });
+
+            drawHeatingCurveGraph(graphArea, pressure);
+        }
+
+        function drawHeatingCurveGraph(area, pressure) {
+            const { x: gx, y: gy, w: gw, h: gh } = area;
+            const maxTemp = 125;
+            const dynamicMaxTime = Math.max(MAX_GRAPH_TIME, simTime * 1.05);
+
+            ctx.fillStyle = 'rgba(15, 23, 42, 0.85)';
+            ctx.fillRect(gx, gy, gw, gh);
+            ctx.strokeStyle = '#334155';
+            ctx.lineWidth = 1.5;
+            ctx.strokeRect(gx, gy, gw, gh);
+
+            ctx.textAlign = 'left';
+            ctx.fillStyle = '#e2e8f0';
+            ctx.font = 'bold 13px Inter, sans-serif';
+            ctx.fillText('Curva de Calentamiento (Temperatura vs. Tiempo)', gx, gy - 12);
+
+            ctx.fillStyle = '#94a3b8';
+            ctx.font = '11px Inter, sans-serif';
+            ctx.textAlign = 'center';
+            ctx.fillText('Tiempo / Calor suministrado →', gx + gw / 2, gy + gh + 25);
+
+            ctx.textAlign = 'right';
+            [20, 40, 60, 80, 100, 120].forEach(t => {
+                const py = gy + gh - (t / maxTemp) * gh;
+                ctx.strokeStyle = 'rgba(51, 65, 85, 0.45)';
+                ctx.beginPath();
+                ctx.moveTo(gx, py);
+                ctx.lineTo(gx + gw, py);
+                ctx.stroke();
+
+                ctx.fillStyle = '#94a3b8';
+                ctx.font = '10px Inter, sans-serif';
+                ctx.fillText(`${t}°C`, gx - 6, py + 3);
+            });
+
+            substances.forEach(sub => {
+                const bp = getBoilingPoint(sub, pressure);
+                if (bp <= maxTemp) {
+                    const bpy = gy + gh - (bp / maxTemp) * gh;
+                    ctx.save();
+                    ctx.setLineDash([3, 4]);
+                    ctx.beginPath();
+                    ctx.moveTo(gx, bpy);
+                    ctx.lineTo(gx + gw, bpy);
+                    ctx.strokeStyle = sub.color;
+                    ctx.globalAlpha = 0.22;
+                    ctx.stroke();
+                    ctx.restore();
+                }
+            });
+
+            substances.forEach(sub => {
+                if (sub.history.length < 1) return;
+
+                ctx.beginPath();
+                sub.history.forEach((pt, index) => {
+                    const px = gx + Math.min(1, pt.t / dynamicMaxTime) * gw;
+                    const py = gy + gh - Math.min(1, pt.temp / maxTemp) * gh;
+                    if (index === 0) ctx.moveTo(px, py);
+                    else ctx.lineTo(px, py);
+                });
+                ctx.strokeStyle = sub.color;
+                ctx.lineWidth = 3;
+                ctx.lineJoin = 'round';
+                ctx.stroke();
+
+                const last = sub.history[sub.history.length - 1];
+                const lx = gx + Math.min(1, last.t / dynamicMaxTime) * gw;
+                const ly = gy + gh - Math.min(1, last.temp / maxTemp) * gh;
+
+                ctx.beginPath();
+                ctx.arc(lx, ly, 4.5, 0, Math.PI * 2);
+                ctx.fillStyle = sub.evaporatedDone ? sub.color : '#ffffff';
+                ctx.fill();
+                ctx.strokeStyle = sub.evaporatedDone ? '#ffffff' : sub.color;
+                ctx.lineWidth = 2;
+                ctx.stroke();
+            });
+
+            ctx.textAlign = 'left';
+            substances.forEach((sub, i) => {
+                const bp = getBoilingPoint(sub, pressure);
+                const ly = gy + 20 + i * 18;
+                ctx.fillStyle = sub.color;
+                ctx.fillRect(gx + 12, ly - 8, 14, 3.5);
+                ctx.fillStyle = '#f1f5f9';
+                ctx.font = '11px Inter, sans-serif';
+                const statusTag = sub.evaporatedDone ? ' · Evaporado' : '';
+                ctx.fillText(`${sub.name} (Eb: ${bp.toFixed(1)}°C)${statusTag}`, gx + 32, ly - 2);
+            });
+        }
+
+        let lastTimestamp = 0;
+        function loop(timestamp) {
+            if (!lastTimestamp) lastTimestamp = timestamp;
+            const dt = Math.min(0.05, (timestamp - lastTimestamp) / 1000);
+            lastTimestamp = timestamp;
+
+            updatePhysics(dt);
+            drawScene();
+            requestAnimationFrame(loop);
+        }
+
+        playPauseBtn.addEventListener('click', () => {
+            isPaused = !isPaused;
+            playPauseBtn.textContent = isPaused ? '▶ Reanudar' : '⏸ Pausar';
+            playPauseBtn.className = isPaused 
+                ? 'px-4 py-2 rounded-xl text-sm font-semibold bg-amber-600 hover:bg-amber-500 text-white transition shadow'
+                : 'px-4 py-2 rounded-xl text-sm font-semibold bg-emerald-600 hover:bg-emerald-500 text-white transition shadow';
+        });
+
+        resetBtn.addEventListener('click', () => {
+            isPaused = false;
+            playPauseBtn.textContent = '⏸ Pausar';
+            playPauseBtn.className = 'px-4 py-2 rounded-xl text-sm font-semibold bg-emerald-600 hover:bg-emerald-500 text-white transition shadow';
+            initSimulation();
+        });
+
+        window.onload = function() {
+            initSimulation();
+            requestAnimationFrame(loop);
+        };
+    </script>
+</body>
+</html>
+```
